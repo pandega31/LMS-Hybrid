@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { laravelAPI, nodeAPI } from '../lib/api';
+import axios from 'axios';
 
 const levelBadge = {
   pemula:   'bg-emerald-100 text-emerald-700 border border-emerald-200',
@@ -235,7 +236,7 @@ const navItems = [
   { id: 'my-courses', label: 'Kursus Saya',    icon: '📚' },
   { id: 'catalog',    label: 'Katalog Kursus', icon: '🔎' },
   { id: 'quiz',       label: 'Evaluasi Kuis',  icon: '✏️' },
-  { id: 'nilai',      label: 'Rekap Nilai',    icon: '📊' },
+  { id: 'profile',    label: 'Profil Saya',    icon: '👤' },
 ];
 
 export default function StudentDashboard() {
@@ -251,8 +252,18 @@ export default function StudentDashboard() {
   const [leaderboardQuizId, setLeaderboardQuizId] = useState(null);
   const [leaderboardEntries, setLeaderboardEntries] = useState([]);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  const user = JSON.parse(localStorage.getItem('user') || '{}');
+  const [user, setUser] = useState(JSON.parse(localStorage.getItem('user') || '{}'));
+
+  // Profile States
+  const [profileName, setProfileName] = useState(user.name || '');
+  const [profilePassword, setProfilePassword] = useState('');
+  const [profilePasswordConfirm, setProfilePasswordConfirm] = useState('');
+  const [profilePhoto, setProfilePhoto] = useState(null);
+  const [profilePreview, setProfilePreview] = useState(user.profile_photo ? `http://localhost:8000/storage/${user.profile_photo}` : null);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileMessage, setProfileMessage] = useState({ type: '', text: '' });
 
   const fetchData = async () => {
     try {
@@ -287,6 +298,52 @@ export default function StudentDashboard() {
   }, [quizzes]);
 
   const handleLogout = () => { localStorage.clear(); navigate('/login'); };
+
+  const handleProfilePhotoChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setProfilePhoto(file);
+      setProfilePreview(URL.createObjectURL(file));
+    }
+  };
+
+  const handleProfileSubmit = async (e) => {
+    e.preventDefault();
+    if (profilePassword && profilePassword !== profilePasswordConfirm) {
+      setProfileMessage({ type: 'error', text: 'Konfirmasi kata sandi tidak cocok.' });
+      return;
+    }
+
+    setProfileLoading(true);
+    setProfileMessage({ type: '', text: '' });
+
+    try {
+      const formData = new FormData();
+      formData.append('name', profileName);
+      if (profilePassword) formData.append('password', profilePassword);
+      if (profilePassword) formData.append('password_confirmation', profilePasswordConfirm);
+      if (profilePhoto) formData.append('photo', profilePhoto);
+
+      const token = localStorage.getItem('token');
+      const res = await axios.post('http://localhost:8000/api/me/profile', formData, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'multipart/form-data',
+        }
+      });
+
+      const updatedUser = res.data.user;
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+      setUser(updatedUser);
+      setProfilePassword('');
+      setProfilePasswordConfirm('');
+      setProfileMessage({ type: 'success', text: 'Profil berhasil diperbarui!' });
+    } catch (err) {
+      setProfileMessage({ type: 'error', text: err.response?.data?.message || 'Gagal memperbarui profil.' });
+    } finally {
+      setProfileLoading(false);
+    }
+  };
 
   const avgScore = submissions.length
     ? Math.round(submissions.reduce((s, x) => s + x.percentage, 0) / submissions.length) : 0;
@@ -340,13 +397,28 @@ export default function StudentDashboard() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-emerald-100 font-sans flex h-screen overflow-hidden">
 
+      {/* Mobile Sidebar Overlay */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 z-30 bg-emerald-950/20 backdrop-blur-sm md:hidden" 
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
       {/* Sidebar */}
-      <aside className="w-64 bg-emerald-700 text-white border-r border-emerald-800/30 flex flex-col flex-shrink-0 shadow-[0_20px_50px_rgba(4,120,87,0.18)]">
+      <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-emerald-700 text-white border-r border-emerald-800/30 flex flex-col flex-shrink-0 shadow-[0_20px_50px_rgba(4,120,87,0.18)] transform transition-transform duration-300 md:relative md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         {/* Brand */}
         <div className="p-5 border-b border-white/15">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 bg-white/15 rounded-xl flex items-center justify-center text-white font-bold text-sm ring-1 ring-white/15">🎓</div>
-            <span className="font-extrabold text-white text-sm tracking-tight">Student Hub</span>
+            {user.profile_photo ? (
+              <img src={`http://localhost:8000/storage/${user.profile_photo}`} alt="Profile" className="w-9 h-9 rounded-xl object-cover ring-1 ring-white/15" />
+            ) : (
+              <div className="w-9 h-9 bg-white/15 rounded-xl flex items-center justify-center text-white font-bold ring-1 ring-white/15">🎓</div>
+            )}
+            <div className="min-w-0">
+              <h2 className="font-bold text-sm truncate">{user.name}</h2>
+              <p className="text-[10px] text-emerald-200 uppercase tracking-widest mt-0.5">{user.role}</p>
+            </div>
           </div>
         </div>
 
@@ -355,7 +427,7 @@ export default function StudentDashboard() {
           {navItems.map(item => (
             <button
               key={item.id}
-              onClick={() => setActiveTab(item.id)}
+              onClick={() => { setActiveTab(item.id); setIsSidebarOpen(false); }}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
                 activeTab === item.id
                   ? 'bg-white text-emerald-700 font-semibold shadow-sm'
@@ -389,7 +461,27 @@ export default function StudentDashboard() {
       </aside>
 
       {/* Main */}
-      <main className="flex-1 overflow-y-auto p-6 lg:p-8 bg-gradient-to-br from-white via-emerald-50/40 to-white">
+      <main className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden bg-gradient-to-br from-white via-emerald-50/40 to-white">
+        
+        {/* Mobile Header for Hamburger Menu */}
+        <div className="md:hidden flex items-center justify-between p-4 border-b border-emerald-100 bg-white/80 backdrop-blur-xl">
+          <div className="flex items-center gap-2">
+            {user.profile_photo ? (
+              <img src={`http://localhost:8000/storage/${user.profile_photo}`} alt="Profile" className="w-8 h-8 rounded-lg object-cover" />
+            ) : (
+              <div className="w-8 h-8 bg-emerald-100 rounded-lg flex items-center justify-center text-emerald-700 font-bold">🎓</div>
+            )}
+            <span className="font-bold text-emerald-950">Student Hub</span>
+          </div>
+          <button 
+            onClick={() => setIsSidebarOpen(true)}
+            className="p-2 text-emerald-700 hover:bg-emerald-50 rounded-xl border border-emerald-100"
+          >
+            ☰
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 lg:p-8">
 
         {/* ===== BERANDA ===== */}
         {activeTab === 'beranda' && (
@@ -401,7 +493,7 @@ export default function StudentDashboard() {
               <p className="text-zinc-500 text-sm mt-1">Terus tingkatkan keahlian Anda. Konsistensi adalah kunci sukses.</p>
             </div>
 
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <StatCard icon="📚" label="Kursus Diikuti"  value={courses.length}      color="bg-teal-50 text-teal-600" />
               <StatCard icon="✅" label="Kursus Selesai"  value={completedCourses}    color="bg-emerald-50 text-emerald-600" />
               <StatCard icon="✏️" label="Kuis Dikerjakan" value={submissions.length}  color="bg-amber-50 text-amber-600" />
@@ -409,7 +501,7 @@ export default function StudentDashboard() {
             </div>
 
             <div>
-              <div className="flex justify-between items-center mb-4">
+              <div className="flex flex-col sm:flex-row justify-between sm:items-center mb-4 gap-2">
                 <h2 className="font-bold text-zinc-800">Lanjutkan Belajar</h2>
                 <button onClick={() => setActiveTab('my-courses')} className="text-xs text-teal-600 hover:underline font-medium">
                   Semua kelas →
@@ -550,7 +642,7 @@ export default function StudentDashboard() {
               <p className="text-zinc-500 text-sm mt-1">Laporan nilai evaluasi kuis yang telah diselesaikan.</p>
             </div>
 
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               {[
                 { label: 'Rata-rata Nilai', value: `${avgScore}%`, color: 'text-teal-600' },
                 { label: 'Kuis Lulus (≥70%)', value: submissions.filter(s => s.percentage >= 70).length, color: 'text-emerald-600' },
@@ -563,8 +655,9 @@ export default function StudentDashboard() {
               ))}
             </div>
 
-            <div className="bg-white/90 border border-emerald-100 rounded-2xl overflow-hidden shadow-[0_14px_40px_rgba(16,185,129,0.08)]">
-              <table className="w-full text-left">
+            <div className="bg-white/90 border border-emerald-100 rounded-2xl shadow-[0_14px_40px_rgba(16,185,129,0.08)] overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left min-w-[650px]">
                 <thead>
                   <tr className="border-b border-zinc-100 bg-zinc-50">
                     <th className="px-5 py-4 text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Judul Kuis</th>
@@ -618,7 +711,108 @@ export default function StudentDashboard() {
                     </tr>
                   )}
                 </tbody>
-              </table>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ===== PROFIL SAYA ===== */}
+        {activeTab === 'profile' && (
+          <div className="space-y-6 max-w-2xl mx-auto">
+            <div>
+              <h1 className="text-2xl font-bold text-zinc-900">Profil Saya</h1>
+              <p className="text-zinc-500 text-sm mt-1">Kelola informasi pribadi dan keamanan akun Anda.</p>
+            </div>
+
+            <div className="bg-white/90 border border-emerald-100 rounded-2xl p-6 lg:p-8 shadow-[0_14px_40px_rgba(16,185,129,0.08)]">
+              {profileMessage.text && (
+                <div className={`mb-6 p-4 rounded-xl text-sm font-medium ${profileMessage.type === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+                  {profileMessage.text}
+                </div>
+              )}
+
+              <form onSubmit={handleProfileSubmit} className="space-y-5">
+                {/* Foto Profil */}
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wide mb-3">Foto Profil</label>
+                  <div className="flex items-center gap-4">
+                    <div className="w-20 h-20 rounded-2xl bg-zinc-100 border border-zinc-200 overflow-hidden flex-shrink-0 flex items-center justify-center">
+                      {profilePreview ? (
+                        <img src={profilePreview} alt="Preview" className="w-full h-full object-cover" />
+                      ) : (
+                        <span className="text-3xl">👤</span>
+                      )}
+                    </div>
+                    <div>
+                      <input type="file" id="photo-upload" accept="image/*" className="hidden" onChange={handleProfilePhotoChange} />
+                      <label htmlFor="photo-upload" className="cursor-pointer bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 text-sm font-semibold px-4 py-2 rounded-xl transition-colors">
+                        Pilih Foto...
+                      </label>
+                      <p className="text-xs text-zinc-400 mt-2">Format: JPG, PNG, GIF. Maks: 2MB.</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-zinc-100">
+                  <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wide mb-1.5">Nama Lengkap</label>
+                  <input
+                    type="text"
+                    value={profileName}
+                    onChange={(e) => setProfileName(e.target.value)}
+                    required
+                    className="w-full bg-zinc-50 border border-zinc-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 rounded-xl px-4 py-3 text-sm transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wide mb-1.5">Alamat Email (Tidak Dapat Diubah)</label>
+                  <input
+                    type="email"
+                    value={user.email}
+                    disabled
+                    className="w-full bg-zinc-100 border border-zinc-200 text-zinc-500 rounded-xl px-4 py-3 text-sm cursor-not-allowed"
+                  />
+                </div>
+
+                <div className="pt-4 border-t border-zinc-100">
+                  <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wide mb-1.5">Kata Sandi Baru</label>
+                  <input
+                    type="password"
+                    value={profilePassword}
+                    onChange={(e) => setProfilePassword(e.target.value)}
+                    placeholder="Biarkan kosong jika tidak ingin mengubah"
+                    className="w-full bg-zinc-50 border border-zinc-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 rounded-xl px-4 py-3 text-sm transition-all"
+                  />
+                </div>
+
+                {profilePassword && (
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wide mb-1.5">Konfirmasi Kata Sandi Baru</label>
+                    <input
+                      type="password"
+                      value={profilePasswordConfirm}
+                      onChange={(e) => setProfilePasswordConfirm(e.target.value)}
+                      required
+                      className="w-full bg-zinc-50 border border-zinc-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 rounded-xl px-4 py-3 text-sm transition-all"
+                    />
+                  </div>
+                )}
+
+                <div className="pt-6">
+                  <button
+                    type="submit"
+                    disabled={profileLoading}
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl shadow-lg shadow-emerald-600/20 transition-all flex justify-center items-center gap-2"
+                  >
+                    {profileLoading ? (
+                      <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin"></div> Menyimpan...</>
+                    ) : (
+                      'Simpan Perubahan'
+                    )}
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         )}
@@ -634,7 +828,7 @@ export default function StudentDashboard() {
             <ReviewModal quiz={reviewModal.quiz} submission={reviewModal.submission} onClose={closeReview} />
           )
         )}
-
+        </div>
       </main>
     </div>
   );

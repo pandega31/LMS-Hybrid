@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { laravelAPI, nodeAPI } from '../lib/api';
+import axios from 'axios';
 
 // ─── Reusable Modal wrapper ───────────────────────────────────────────────────
 function Modal({ title, onClose, children }) {
@@ -32,7 +33,7 @@ export default function InstructorDashboard() {
   const [quizzes, setQuizzes]             = useState([]);
   const [selectedQuiz, setSelectedQuiz]   = useState(null);
   const [loading, setLoading]             = useState(true);
-  const [activeTab, setActiveTab]         = useState('courses');
+  const [activeTab, setActiveTab]         = useState('dashboard');
   const [analytics, setAnalytics]         = useState({
     total_courses: 0,
     total_quizzes: 0,
@@ -42,7 +43,10 @@ export default function InstructorDashboard() {
     completion_rate: 0,
     top_quiz: null,
     recent_submissions: [],
+    all_quizzes: [],
   });
+
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const [courseModal, setCourseModal]     = useState({ open: false, mode: 'create', data: null });
   const [materialModal, setMaterialModal] = useState({ open: false, mode: 'create', data: null });
@@ -50,11 +54,20 @@ export default function InstructorDashboard() {
   const [questionModal, setQuestionModal] = useState({ open: false, mode: 'create', idx: null, data: null });
 
   const [courseForm, setCourseForm]       = useState({ title: '', description: '', category: 'Pemrograman', level: 'pemula', is_published: true, thumbnail: '' });
-  const [materialForm, setMaterialForm]   = useState({ title: '', type: 'video', content: '', video_url: '' });
+  const [materialForm, setMaterialForm]   = useState({ title: '', type: 'video', content: '', video_url: '', file: null });
   const [quizForm, setQuizForm]           = useState({ title: '', duration_mins: 15 });
   const [questionForm, setQuestionForm]   = useState({ question: '', optionA: '', optionB: '', optionC: '', optionD: '', correct_index: 0, points: 10 });
 
-  const user = JSON.parse(localStorage.getItem('user') || '{}');
+  const [user, setUser] = useState(JSON.parse(localStorage.getItem('user') || '{}'));
+
+  // Profile States
+  const [profileName, setProfileName] = useState(user.name || '');
+  const [profilePassword, setProfilePassword] = useState('');
+  const [profilePasswordConfirm, setProfilePasswordConfirm] = useState('');
+  const [profilePhoto, setProfilePhoto] = useState(null);
+  const [profilePreview, setProfilePreview] = useState(user.profile_photo ? `http://localhost:8000/storage/${user.profile_photo}` : null);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileMessage, setProfileMessage] = useState({ type: '', text: '' });
 
   const fetchCourses = async () => {
     try {
@@ -76,6 +89,7 @@ export default function InstructorDashboard() {
           completion_rate: 0,
           top_quiz: null,
           recent_submissions: [],
+          all_quizzes: [],
         });
       }
     } catch (err) { console.error(err); }
@@ -85,6 +99,52 @@ export default function InstructorDashboard() {
   useEffect(() => { fetchCourses(); }, []);
 
   const handleLogout = () => { localStorage.clear(); navigate('/login'); };
+
+  const handleProfilePhotoChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setProfilePhoto(file);
+      setProfilePreview(URL.createObjectURL(file));
+    }
+  };
+
+  const handleProfileSubmit = async (e) => {
+    e.preventDefault();
+    if (profilePassword && profilePassword !== profilePasswordConfirm) {
+      setProfileMessage({ type: 'error', text: 'Konfirmasi kata sandi tidak cocok.' });
+      return;
+    }
+
+    setProfileLoading(true);
+    setProfileMessage({ type: '', text: '' });
+
+    try {
+      const formData = new FormData();
+      formData.append('name', profileName);
+      if (profilePassword) formData.append('password', profilePassword);
+      if (profilePassword) formData.append('password_confirmation', profilePasswordConfirm);
+      if (profilePhoto) formData.append('photo', profilePhoto);
+
+      const token = localStorage.getItem('token');
+      const res = await axios.post('http://localhost:8000/api/me/profile', formData, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'multipart/form-data',
+        }
+      });
+
+      const updatedUser = res.data.user;
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+      setUser(updatedUser);
+      setProfilePassword('');
+      setProfilePasswordConfirm('');
+      setProfileMessage({ type: 'success', text: 'Profil berhasil diperbarui!' });
+    } catch (err) {
+      setProfileMessage({ type: 'error', text: err.response?.data?.message || 'Gagal memperbarui profil.' });
+    } finally {
+      setProfileLoading(false);
+    }
+  };
 
   // ── Course CRUD ──
   const openCourseCreate = () => {
@@ -130,23 +190,40 @@ export default function InstructorDashboard() {
 
   // ── Material CRUD ──
   const openMaterialCreate = () => {
-    setMaterialForm({ title: '', type: 'video', content: '', video_url: '' });
+    setMaterialForm({ title: '', type: 'video', content: '', video_url: '', file: null });
     setMaterialModal({ open: true, mode: 'create', data: null });
   };
   const openMaterialEdit = (m) => {
-    setMaterialForm({ title: m.title, type: m.type, content: m.content || '', video_url: m.video_url || '' });
+    setMaterialForm({ title: m.title, type: m.type, content: m.content || '', video_url: m.video_url || '', file: null });
     setMaterialModal({ open: true, mode: 'edit', data: m });
   };
   const handleMaterialSubmit = async (e) => {
     e.preventDefault();
     try {
-      materialModal.mode === 'create'
-        ? await laravelAPI.post(`/courses/${selectedCourse.id}/materials`, materialForm)
-        : await laravelAPI.put(`/materials/${materialModal.data.id}`, materialForm);
+      const formData = new FormData();
+      formData.append('title', materialForm.title);
+      formData.append('type', materialForm.type);
+      if (materialForm.content) formData.append('content', materialForm.content);
+      if (materialForm.video_url) formData.append('video_url', materialForm.video_url);
+      if (materialForm.file) formData.append('file', materialForm.file);
+
+      if (materialModal.mode === 'create') {
+        await laravelAPI.post(`/courses/${selectedCourse.id}/materials`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        });
+      } else {
+        // Gunakan route POST khusus karena Laravel API route tidak mendukung method spoofing via FormData
+        await laravelAPI.post(`/materials/${materialModal.data.id}/update-with-file`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        });
+      }
       setMaterialModal({ open: false, mode: 'create', data: null });
       const matRes = await laravelAPI.get(`/courses/${selectedCourse.id}`);
       setMaterials(matRes.data.materials || []);
-    } catch { alert('Gagal menyimpan materi.'); }
+    } catch (err) {
+      console.error(err);
+      alert('Gagal menyimpan materi: ' + (err.response?.data?.message || err.message));
+    }
   };
   const handleMaterialDelete = async (id) => {
     if (!window.confirm('Hapus materi ini?')) return;
@@ -207,24 +284,50 @@ export default function InstructorDashboard() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-emerald-100 font-sans flex h-screen overflow-hidden">
 
+      {/* Mobile Sidebar Overlay */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 z-30 bg-emerald-950/20 backdrop-blur-sm md:hidden" 
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
       {/* Sidebar */}
-      <aside className="w-64 bg-emerald-700 text-white border-r border-emerald-800/30 flex flex-col flex-shrink-0 shadow-[0_20px_50px_rgba(4,120,87,0.18)]">
+      <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-emerald-700 text-white border-r border-emerald-800/30 flex flex-col flex-shrink-0 shadow-[0_20px_50px_rgba(4,120,87,0.18)] transform transition-transform duration-300 md:relative md:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="p-5 border-b border-white/15">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 bg-white/15 rounded-xl flex items-center justify-center text-white font-bold ring-1 ring-white/15">👨‍🏫</div>
-            <span className="font-extrabold text-white text-sm">Instructor Hub</span>
-          </div>
+          <button 
+            onClick={() => { setActiveTab('profile'); setSelectedQuiz(null); setSelectedCourse(null); setIsSidebarOpen(false); }}
+            className="w-full flex items-center gap-2.5 hover:opacity-80 transition-opacity text-left"
+          >
+            {user.profile_photo ? (
+              <img src={`http://localhost:8000/storage/${user.profile_photo}`} alt="Profile" className="w-9 h-9 rounded-xl object-cover ring-1 ring-white/15" />
+            ) : (
+              <div className="w-9 h-9 bg-white/15 rounded-xl flex items-center justify-center text-white font-bold ring-1 ring-white/15">👨‍🏫</div>
+            )}
+            <div className="min-w-0">
+              <h2 className="font-bold text-sm truncate">{user.name}</h2>
+              <p className="text-[10px] text-emerald-200 uppercase tracking-widest mt-0.5">{user.role}</p>
+            </div>
+          </button>
         </div>
 
-        <nav className="flex-1 p-3 space-y-0.5">
-          <button
-            onClick={() => { setSelectedCourse(null); setSelectedQuiz(null); }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
-              !selectedCourse ? 'bg-white text-emerald-700 font-semibold shadow-sm' : 'text-emerald-50/85 hover:bg-white/10 hover:text-white'
-            }`}
-          >
-            <span>📚</span> Semua Kursus
-          </button>
+        <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
+          {[
+            { id: 'dashboard', label: 'Dashboard Utama', icon: '📊' },
+            { id: 'profile',   label: 'Profil Saya',     icon: '👤' }
+          ].map(t => (
+            <button
+              key={t.id}
+              onClick={() => { setActiveTab(t.id); setSelectedQuiz(null); setSelectedCourse(null); setIsSidebarOpen(false); }}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                activeTab === t.id && !selectedCourse
+                  ? 'bg-white text-emerald-700 font-semibold shadow-sm'
+                  : 'text-emerald-50/85 hover:bg-white/10 hover:text-white'
+              }`}
+            >
+              <span>{t.icon}</span> {t.label}
+            </button>
+          ))}
 
           {selectedCourse && (
             <div className="pt-3 mt-3 border-t border-white/15 space-y-0.5">
@@ -237,7 +340,7 @@ export default function InstructorDashboard() {
               ].map(t => (
                 <button
                   key={t.id}
-                  onClick={() => { setActiveTab(t.id); setSelectedQuiz(null); }}
+                  onClick={() => { setActiveTab(t.id); setSelectedQuiz(null); setIsSidebarOpen(false); }}
                   className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
                     activeTab === t.id && !selectedQuiz
                       ? 'bg-white text-emerald-700 font-semibold shadow-sm'
@@ -252,15 +355,18 @@ export default function InstructorDashboard() {
         </nav>
 
         <div className="p-4 border-t border-white/15">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-8 h-8 bg-white/15 text-white font-bold rounded-full flex items-center justify-center text-xs flex-shrink-0 ring-1 ring-white/15">
+          <button 
+            onClick={() => { setActiveTab('profile'); setSelectedQuiz(null); setSelectedCourse(null); setIsSidebarOpen(false); }}
+            className="w-full flex items-center gap-3 mb-3 p-2 hover:bg-white/15 rounded-xl transition-all text-left"
+          >
+            <div className="w-8 h-8 bg-white/15 text-white font-bold rounded-full flex items-center justify-center text-xs flex-shrink-0 ring-1 ring-white/15 group-hover:ring-white/30">
               {user.name?.slice(0, 2).toUpperCase()}
             </div>
             <div className="min-w-0">
               <p className="text-xs font-bold text-white truncate">{user.name}</p>
               <p className="text-[10px] text-emerald-50/80 capitalize">{user.role}</p>
             </div>
-          </div>
+          </button>
           <button onClick={handleLogout} className="w-full bg-white/10 hover:bg-white text-white hover:text-emerald-700 text-xs py-2 rounded-lg border border-white/15 hover:border-white transition-all">
             Keluar
           </button>
@@ -268,7 +374,30 @@ export default function InstructorDashboard() {
       </aside>
 
       {/* Main */}
-      <main className="flex-1 overflow-y-auto p-6 lg:p-8 bg-gradient-to-br from-white via-emerald-50/40 to-white">
+      <main className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden bg-gradient-to-br from-white via-emerald-50/40 to-white">
+        
+        {/* Mobile Header for Hamburger Menu */}
+        <div className="md:hidden flex items-center justify-between p-4 border-b border-emerald-100 bg-white/80 backdrop-blur-xl">
+          <button 
+            onClick={() => setActiveTab('profile')}
+            className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+          >
+            {user.profile_photo ? (
+              <img src={`http://localhost:8000/storage/${user.profile_photo}`} alt="Profile" className="w-8 h-8 rounded-lg object-cover" />
+            ) : (
+              <div className="w-8 h-8 bg-emerald-100 rounded-lg flex items-center justify-center text-emerald-700 font-bold">👨‍🏫</div>
+            )}
+            <span className="font-bold text-emerald-950">Instructor Hub</span>
+          </button>
+          <button 
+            onClick={() => setIsSidebarOpen(true)}
+            className="p-2 text-emerald-700 hover:bg-emerald-50 rounded-xl border border-emerald-100"
+          >
+            ☰
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 lg:p-8">
         {loading ? (
           <div className="h-full flex items-center justify-center">
             <div className="text-center">
@@ -276,21 +405,121 @@ export default function InstructorDashboard() {
               <p className="text-sm text-zinc-500">Memuat data...</p>
             </div>
           </div>
+        ) : activeTab === 'profile' ? (
+          
+          /* ── PROFIL SAYA ── */
+          <div className="space-y-6 max-w-2xl mx-auto">
+            <div>
+              <h1 className="text-2xl font-bold text-zinc-900">Profil Saya</h1>
+              <p className="text-zinc-500 text-sm mt-1">Kelola informasi pribadi dan keamanan akun Anda.</p>
+            </div>
+
+            <div className="bg-white/90 border border-emerald-100 rounded-2xl p-6 lg:p-8 shadow-[0_14px_40px_rgba(16,185,129,0.08)]">
+              {profileMessage.text && (
+                <div className={`mb-6 p-4 rounded-xl text-sm font-medium ${profileMessage.type === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+                  {profileMessage.text}
+                </div>
+              )}
+
+              <form onSubmit={handleProfileSubmit} className="space-y-5">
+                {/* Foto Profil */}
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wide mb-3">Foto Profil</label>
+                  <div className="flex items-center gap-4">
+                    <div className="w-20 h-20 rounded-2xl bg-zinc-100 border border-zinc-200 overflow-hidden flex-shrink-0 flex items-center justify-center">
+                      {profilePreview ? (
+                        <img src={profilePreview} alt="Preview" className="w-full h-full object-cover" />
+                      ) : (
+                        <span className="text-3xl">👤</span>
+                      )}
+                    </div>
+                    <div>
+                      <input type="file" id="photo-upload" accept="image/*" className="hidden" onChange={handleProfilePhotoChange} />
+                      <label htmlFor="photo-upload" className="cursor-pointer bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 text-sm font-semibold px-4 py-2 rounded-xl transition-colors">
+                        Pilih Foto...
+                      </label>
+                      <p className="text-xs text-zinc-400 mt-2">Format: JPG, PNG, GIF. Maks: 2MB.</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-zinc-100">
+                  <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wide mb-1.5">Nama Lengkap</label>
+                  <input
+                    type="text"
+                    value={profileName}
+                    onChange={(e) => setProfileName(e.target.value)}
+                    required
+                    className="w-full bg-zinc-50 border border-zinc-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 rounded-xl px-4 py-3 text-sm transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wide mb-1.5">Alamat Email (Tidak Dapat Diubah)</label>
+                  <input
+                    type="email"
+                    value={user.email}
+                    disabled
+                    className="w-full bg-zinc-100 border border-zinc-200 text-zinc-500 rounded-xl px-4 py-3 text-sm cursor-not-allowed"
+                  />
+                </div>
+
+                <div className="pt-4 border-t border-zinc-100">
+                  <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wide mb-1.5">Kata Sandi Baru</label>
+                  <input
+                    type="password"
+                    value={profilePassword}
+                    onChange={(e) => setProfilePassword(e.target.value)}
+                    placeholder="Biarkan kosong jika tidak ingin mengubah"
+                    className="w-full bg-zinc-50 border border-zinc-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 rounded-xl px-4 py-3 text-sm transition-all"
+                  />
+                </div>
+
+                {profilePassword && (
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-700 uppercase tracking-wide mb-1.5">Konfirmasi Kata Sandi Baru</label>
+                    <input
+                      type="password"
+                      value={profilePasswordConfirm}
+                      onChange={(e) => setProfilePasswordConfirm(e.target.value)}
+                      required
+                      className="w-full bg-zinc-50 border border-zinc-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 rounded-xl px-4 py-3 text-sm transition-all"
+                    />
+                  </div>
+                )}
+
+                <div className="pt-6">
+                  <button
+                    type="submit"
+                    disabled={profileLoading}
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl shadow-lg shadow-emerald-600/20 transition-all flex justify-center items-center gap-2"
+                  >
+                    {profileLoading ? (
+                      <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin"></div> Menyimpan...</>
+                    ) : (
+                      'Simpan Perubahan'
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+
         ) : !selectedCourse ? (
 
           /* ── SEMUA KURSUS ── */
-          <div className="space-y-6 max-w-5xl">
-            <div className="flex justify-between items-center">
+          <div className="space-y-6 max-w-5xl mx-auto">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
               <div>
                 <h1 className="text-2xl font-bold text-zinc-900">Kelas Saya</h1>
                 <p className="text-zinc-500 text-sm mt-1">Kelola silabus, materi, dan kuis kelas Anda.</p>
               </div>
-              <button onClick={openCourseCreate} className={`${btnPrimary} flex items-center gap-2`}>
+              <button onClick={openCourseCreate} className={`${btnPrimary} flex items-center justify-center gap-2 w-full sm:w-auto`}>
                 + Tambah Kelas
               </button>
             </div>
 
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {[
                 { label: 'Kelas Aktif', value: analytics.total_courses, tone: 'text-emerald-600 bg-emerald-50' },
                 { label: 'Total Kuis', value: analytics.total_quizzes, tone: 'text-teal-600 bg-teal-50' },
@@ -308,7 +537,7 @@ export default function InstructorDashboard() {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <div className="bg-white/90 border border-emerald-100 rounded-2xl p-5 shadow-[0_14px_40px_rgba(16,185,129,0.08)] lg:col-span-2">
                 <p className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider">Ringkasan Kinerja</p>
-                <div className="mt-4 grid grid-cols-2 gap-4">
+                <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="rounded-2xl bg-emerald-50 border border-emerald-100 p-4">
                     <p className="text-xs text-emerald-600 font-semibold uppercase tracking-wider">Completion Rate</p>
                     <p className="text-3xl font-extrabold text-emerald-700 mt-1">{analytics.completion_rate}%</p>
@@ -333,7 +562,7 @@ export default function InstructorDashboard() {
                 <div className="mt-4 rounded-2xl border border-emerald-100 bg-white p-4">
                   <p className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider">Leaderboard Kuis</p>
                   <div className="mt-3 space-y-2">
-                    {quizzes.length > 0 ? quizzes.map(q => (
+                    {analytics.all_quizzes && analytics.all_quizzes.length > 0 ? analytics.all_quizzes.map(q => (
                       <div key={q._id} className="flex items-center justify-between gap-3 rounded-xl border border-zinc-100 bg-zinc-50 px-3 py-2">
                         <div className="min-w-0">
                           <p className="text-sm font-semibold text-zinc-800 truncate">{q.title}</p>
@@ -407,13 +636,13 @@ export default function InstructorDashboard() {
         ) : (
 
           /* ── DETAIL KURSUS ── */
-          <div className="space-y-6 max-w-4xl">
-            <div className="flex justify-between items-center">
+          <div className="space-y-6 max-w-4xl mx-auto">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
               <div>
                 <span className="text-xs text-emerald-600 font-semibold uppercase tracking-wide">{selectedCourse.category}</span>
-                <h1 className="text-2xl font-bold text-emerald-950">{selectedCourse.title}</h1>
+                <h1 className="text-xl sm:text-2xl font-bold text-emerald-950 mt-1">{selectedCourse.title}</h1>
               </div>
-              <button onClick={() => { setSelectedCourse(null); setSelectedQuiz(null); }} className={btnSecondary}>
+              <button onClick={() => { setSelectedCourse(null); setSelectedQuiz(null); }} className={`${btnSecondary} w-full sm:w-auto`}>
                 ← Kembali
               </button>
             </div>
@@ -421,9 +650,9 @@ export default function InstructorDashboard() {
             {/* ── MATERI ── */}
             {activeTab === 'materials' && (
               <div className="bg-white/90 border border-emerald-100 rounded-2xl overflow-hidden shadow-[0_14px_40px_rgba(16,185,129,0.08)]">
-                <div className="flex justify-between items-center px-6 py-4 border-b border-emerald-100">
+                <div className="flex flex-col sm:flex-row justify-between sm:items-center px-6 py-4 border-b border-emerald-100 gap-3">
                   <h2 className="font-bold text-emerald-900">Silabus Pembelajaran</h2>
-                  <button onClick={openMaterialCreate} className={`${btnPrimary} text-xs py-2`}>+ Tambah Materi</button>
+                  <button onClick={openMaterialCreate} className={`${btnPrimary} text-xs py-2 w-full sm:w-auto`}>+ Tambah Materi</button>
                 </div>
                 <div className="divide-y divide-emerald-100">
                   {materials.map(m => (
@@ -451,18 +680,18 @@ export default function InstructorDashboard() {
             {/* ── KUIS LIST ── */}
             {activeTab === 'quizzes' && !selectedQuiz && (
               <div className="bg-white/90 border border-emerald-100 rounded-2xl overflow-hidden shadow-[0_14px_40px_rgba(16,185,129,0.08)]">
-                <div className="flex justify-between items-center px-6 py-4 border-b border-emerald-100">
+                <div className="flex flex-col sm:flex-row justify-between sm:items-center px-6 py-4 border-b border-emerald-100 gap-3">
                   <h2 className="font-bold text-emerald-900">Evaluasi Kuis</h2>
-                  <button onClick={openQuizCreate} className={`${btnPrimary} text-xs py-2`}>+ Buat Kuis</button>
+                  <button onClick={openQuizCreate} className={`${btnPrimary} text-xs py-2 w-full sm:w-auto`}>+ Buat Kuis</button>
                 </div>
                 <div className="divide-y divide-emerald-100">
                   {quizzes.map(q => (
-                    <div key={q._id} className="flex items-center justify-between px-6 py-4 hover:bg-zinc-50 transition-colors">
+                    <div key={q._id} className="flex flex-col sm:flex-row sm:items-center justify-between px-6 py-4 hover:bg-zinc-50 transition-colors gap-4">
                       <div>
                         <p className="text-sm font-semibold text-zinc-700">{q.title}</p>
                         <p className="text-xs text-zinc-400 mt-0.5">⏱ {Math.round(q.duration_secs / 60)} menit • {q.questions?.length || 0} soal</p>
                       </div>
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-2">
                         <button onClick={() => setSelectedQuiz(q)} className="text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 px-3 py-1.5 rounded-lg font-semibold transition-all">
                           Kelola Soal ({q.questions?.length || 0}) →
                         </button>
@@ -481,13 +710,13 @@ export default function InstructorDashboard() {
             {/* ── EDITOR SOAL ── */}
             {activeTab === 'quizzes' && selectedQuiz && (
               <div className="space-y-5">
-                <div className="bg-white/90 border border-emerald-100 rounded-2xl px-6 py-4 flex justify-between items-center shadow-[0_14px_40px_rgba(16,185,129,0.08)]">
+                <div className="bg-white/90 border border-emerald-100 rounded-2xl px-6 py-4 flex flex-col sm:flex-row justify-between sm:items-center gap-4 shadow-[0_14px_40px_rgba(16,185,129,0.08)]">
                   <div>
                     <span className="text-xs text-emerald-600 font-semibold uppercase">Editor Soal</span>
                     <h2 className="font-bold text-emerald-900 text-lg">{selectedQuiz.title}</h2>
                     <p className="text-xs text-zinc-400">Durasi: {Math.round(selectedQuiz.duration_secs / 60)} menit</p>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <button onClick={() => setSelectedQuiz(null)} className={btnSecondary}>← Kembali</button>
                     <button onClick={openQuestionCreate} className={btnPrimary}>+ Tambah Soal</button>
                   </div>
@@ -532,15 +761,15 @@ export default function InstructorDashboard() {
                   )}
                 </div>
 
-                <div className="bg-white/90 border border-emerald-100 rounded-2xl p-6 shadow-[0_14px_40px_rgba(16,185,129,0.08)] flex items-center justify-between gap-4">
-                  <div>
+                <div className="bg-white/90 border border-emerald-100 rounded-2xl p-6 shadow-[0_14px_40px_rgba(16,185,129,0.08)] flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div className="w-full text-center sm:text-left">
                     <p className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider">Leaderboard Quiz</p>
                     <h3 className="text-lg font-bold text-emerald-900 mt-1">Lihat peringkat siswa untuk quiz ini</h3>
                     <p className="text-sm text-zinc-500 mt-1">Halaman leaderboard sekarang terpisah dari dashboard.</p>
                   </div>
                   <button
                     onClick={() => navigate(`/instructor/leaderboard/${selectedQuiz._id}`)}
-                    className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-2.5 rounded-xl transition-colors shadow-sm shadow-emerald-600/15"
+                    className="w-full sm:w-auto text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-2.5 rounded-xl transition-colors shadow-sm shadow-emerald-600/15 whitespace-nowrap"
                   >
                     Buka Leaderboard
                   </button>
@@ -549,6 +778,7 @@ export default function InstructorDashboard() {
             )}
           </div>
         )}
+        </div>
       </main>
 
       {/* ─── MODALS ─────────────────────────────────────────────────────────── */}
@@ -598,12 +828,34 @@ export default function InstructorDashboard() {
               <select value={materialForm.type} onChange={e => setMaterialForm({...materialForm, type: e.target.value})} className={inp}>
                 <option value="video">📺 Video (YouTube)</option>
                 <option value="text">📄 Artikel / Tulisan</option>
-                <option value="pdf">📂 Dokumen PDF</option>
+                <option value="pdf">📂 File</option>
               </select>
             </div>
             {materialForm.type === 'video' && (
               <div><label className={lbl}>URL Video YouTube</label>
                 <input type="url" required value={materialForm.video_url} onChange={e => setMaterialForm({...materialForm, video_url: e.target.value})} placeholder="https://www.youtube.com/watch?v=..." className={inp} />
+              </div>
+            )}
+            {materialForm.type === 'pdf' && (
+              <div><label className={lbl}>Upload File (PDF, Word, PPT)</label>
+                {materialModal.mode === 'edit' && materialModal.data?.file_url && !materialForm.file && (
+                  <div className="mb-2 flex items-center gap-2 p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-700">
+                    <span>📎</span>
+                    <span className="truncate">File tersimpan: <strong>{materialModal.data.file_url.split('/').pop()}</strong></span>
+                    <a
+                      href={`http://localhost:8000/storage/${materialModal.data.file_url}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="ml-auto flex-shrink-0 underline hover:text-emerald-900"
+                    >Lihat</a>
+                  </div>
+                )}
+                <input type="file" accept=".pdf,.doc,.docx,.ppt,.pptx" onChange={e => setMaterialForm({...materialForm, file: e.target.files[0]})} className={inp} />
+                <p className="text-xs text-zinc-400 mt-1">
+                  {materialModal.mode === 'edit' && materialModal.data?.file_url
+                    ? 'Biarkan kosong jika tidak ingin mengganti file. Format: PDF, DOC, DOCX, PPT, PPTX.'
+                    : 'Format: PDF, DOC, DOCX, PPT, PPTX. Maks: 20MB.'}
+                </p>
               </div>
             )}
             <div><label className={lbl}>Konten / Ringkasan</label>

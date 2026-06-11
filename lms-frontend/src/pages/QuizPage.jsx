@@ -124,10 +124,10 @@ export default function QuizPage({ quizId, userId, userName }) {
                 </div>
               </div>
 
-              <div className="mt-8">
+              <div className="mt-8 text-center md:text-left">
                 <button
                   onClick={() => navigate('/dashboard')}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm px-6 py-3 rounded-xl transition-colors shadow-lg shadow-emerald-600/15"
+                  className="w-full md:w-auto bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm px-6 py-3 rounded-xl transition-colors shadow-lg shadow-emerald-600/15"
                 >
                   Kembali ke Dashboard
                 </button>

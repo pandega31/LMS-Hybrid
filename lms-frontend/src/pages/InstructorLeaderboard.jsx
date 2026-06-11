@@ -95,7 +95,7 @@ export default function InstructorLeaderboard() {
                 <p className="text-sm text-zinc-500 mt-2">{quiz.questions?.length || 0} soal • {Math.round((quiz.duration_secs || 0) / 60)} menit</p>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="bg-white/90 border border-emerald-100 rounded-2xl p-5 shadow-[0_14px_40px_rgba(16,185,129,0.08)]">
                   <p className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider">Peserta</p>
                   <p className="text-3xl font-extrabold text-zinc-800 mt-2">{entries.length}</p>

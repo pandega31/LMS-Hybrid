@@ -21,7 +21,13 @@ class MaterialController extends Controller
             'type'      => 'required|in:video,text,pdf',
             'content'   => 'nullable|string',
             'video_url' => 'nullable|url',
+            'file'      => 'nullable|file|mimes:pdf,doc,docx,ppt,pptx|max:20480',
         ]);
+
+        if ($request->hasFile('file')) {
+            $path = $request->file('file')->store('materials', 'public');
+            $validated['file_url'] = $path;
+        }
 
         $validated['course_id'] = $course->id;
         $validated['order']     = Material::where('course_id', $course->id)->count() + 1;
@@ -44,7 +50,16 @@ class MaterialController extends Controller
             'content'   => 'nullable|string',
             'video_url' => 'nullable|url',
             'order'     => 'nullable|integer',
+            'file'      => 'nullable|file|mimes:pdf,doc,docx,ppt,pptx|max:20480',
         ]);
+
+        if ($request->hasFile('file')) {
+            if ($material->file_url && \Illuminate\Support\Facades\Storage::disk('public')->exists($material->file_url)) {
+                \Illuminate\Support\Facades\Storage::disk('public')->delete($material->file_url);
+            }
+            $path = $request->file('file')->store('materials', 'public');
+            $validated['file_url'] = $path;
+        }
 
         $material->update($validated);
 

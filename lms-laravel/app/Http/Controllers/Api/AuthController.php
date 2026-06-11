@@ -3,15 +3,15 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Mail\ResetPasswordMail;
+use App\Mail\OtpMail;
 use App\Mail\WelcomeMail;
+use App\Models\PasswordOtp;
 use App\Models\User;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
-use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
@@ -36,7 +36,6 @@ class AuthController extends Controller
         try {
             Mail::to($user->email)->send(new WelcomeMail($user));
         } catch (\Exception $e) {
-            // Log error tapi jangan gagalkan registrasi
             Log::error('Gagal mengirim email selamat datang: ' . $e->getMessage());
         }
 
@@ -86,8 +85,49 @@ class AuthController extends Controller
         return response()->json($request->user());
     }
 
+    public function updateProfile(Request $request)
+    {
+        $user = $request->user();
+
+        $request->validate([
+            'name'     => 'required|string|max:255',
+            'password' => 'nullable|string|min:8|confirmed',
+            'photo'    => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:2048',
+        ]);
+
+        $user->name = $request->name;
+
+        if ($request->filled('password')) {
+            $user->password = Hash::make($request->password);
+        }
+
+        if ($request->hasFile('photo')) {
+            if ($user->profile_photo && Storage::disk('public')->exists($user->profile_photo)) {
+                Storage::disk('public')->delete($user->profile_photo);
+            }
+            $path = $request->file('photo')->store('profile_photos', 'public');
+            $user->profile_photo = $path;
+        }
+
+        $user->save();
+
+        // Update nama user di MongoDB (leaderboard/submissions) via Node.js API
+        try {
+            \Illuminate\Support\Facades\Http::put('http://localhost:3000/api/submissions/user/' . $user->id . '/name', [
+                'name' => $user->name
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Gagal mengupdate nama di leaderboard nodejs: ' . $e->getMessage());
+        }
+
+        return response()->json([
+            'message' => 'Profil berhasil diperbarui.',
+            'user'    => $user
+        ]);
+    }
+
     /**
-     * Kirim link reset password ke email user
+     * Kirim OTP ke email user untuk reset password
      */
     public function forgotPassword(Request $request)
     {
@@ -100,71 +140,96 @@ class AuthController extends Controller
         // Selalu return sukses meskipun email tidak ditemukan (keamanan)
         if (!$user) {
             return response()->json([
-                'message' => 'Jika email tersebut terdaftar, link reset password telah dikirimkan.',
+                'message' => 'Jika email tersebut terdaftar, kode OTP telah dikirimkan.',
             ]);
         }
 
-        // Hapus token lama jika ada
-        DB::table('password_reset_tokens')->where('email', $user->email)->delete();
+        // Hapus OTP lama jika ada
+        PasswordOtp::where('email', $user->email)->delete();
 
-        // Buat token baru
-        $token = Str::random(64);
+        // Generate OTP 6 digit
+        $otp = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
 
-        DB::table('password_reset_tokens')->insert([
+        // Simpan ke database, berlaku 10 menit
+        PasswordOtp::create([
             'email'      => $user->email,
-            'token'      => Hash::make($token),
-            'created_at' => now(),
+            'otp'        => $otp,
+            'expires_at' => now()->addMinutes(10),
         ]);
 
-        $resetUrl = env('FRONTEND_URL', 'http://localhost:3000') . '/reset-password?token=' . $token . '&email=' . urlencode($user->email);
-
         try {
-            Mail::to($user->email)->send(new ResetPasswordMail($user, $resetUrl));
+            Mail::to($user->email)->send(new OtpMail($user, $otp));
         } catch (\Exception $e) {
-            Log::error('Gagal mengirim email reset password: ' . $e->getMessage());
+            Log::error('Gagal mengirim OTP: ' . $e->getMessage());
             return response()->json([
-                'message' => 'Gagal mengirim email. Silakan coba lagi nanti.',
+                'message' => 'Gagal mengirim email OTP. Silakan coba lagi nanti.',
             ], 500);
         }
 
         return response()->json([
-            'message' => 'Link reset password telah dikirimkan ke email Anda.',
+            'message' => 'Kode OTP telah dikirimkan ke email Anda. Berlaku selama 10 menit.',
         ]);
     }
 
     /**
-     * Proses reset password dengan token yang valid
+     * Verifikasi OTP yang dimasukkan user
+     */
+    public function verifyOtp(Request $request)
+    {
+        $request->validate([
+            'email' => 'required|email',
+            'otp'   => 'required|string|size:6',
+        ]);
+
+        $record = PasswordOtp::where('email', $request->email)->first();
+
+        if (!$record) {
+            return response()->json([
+                'message' => 'Kode OTP tidak ditemukan. Silakan minta ulang.',
+            ], 422);
+        }
+
+        if ($record->isExpired()) {
+            $record->delete();
+            return response()->json([
+                'message' => 'Kode OTP sudah kedaluwarsa. Silakan minta kode baru.',
+            ], 422);
+        }
+
+        if ($record->otp !== $request->otp) {
+            return response()->json([
+                'message' => 'Kode OTP tidak valid.',
+            ], 422);
+        }
+
+        // OTP valid — beri reset_token sementara (bukan langsung hapus, agar bisa reset password)
+        // Buat reset_token unik dan simpan
+        $resetToken = \Illuminate\Support\Str::random(64);
+        $record->update(['reset_token' => $resetToken, 'is_verified' => true]);
+
+        return response()->json([
+            'message'      => 'OTP berhasil diverifikasi.',
+            'reset_token'  => $resetToken,
+            'email'        => $request->email,
+        ]);
+    }
+
+    /**
+     * Proses reset password setelah OTP diverifikasi
      */
     public function resetPassword(Request $request)
     {
         $request->validate([
-            'token'    => 'required|string',
-            'email'    => 'required|email',
-            'password' => 'required|string|min:8|confirmed',
+            'email'        => 'required|email',
+            'reset_token'  => 'required|string',
+            'password'     => 'required|string|min:8|confirmed',
         ]);
 
-        // Cari record di tabel password_reset_tokens
-        $record = DB::table('password_reset_tokens')
-            ->where('email', $request->email)
-            ->first();
+        $record = PasswordOtp::where('email', $request->email)->first();
 
-        if (!$record) {
+        if (!$record || !$record->is_verified || $record->reset_token !== $request->reset_token) {
             return response()->json([
-                'message' => 'Token reset password tidak valid atau sudah kedaluwarsa.',
-            ], 422);
-        }
-
-        // Verifikasi token dan cek kadaluwarsa (60 menit)
-        if (!Hash::check($request->token, $record->token)) {
-            return response()->json([
-                'message' => 'Token reset password tidak valid.',
-            ], 422);
-        }
-
-        if (now()->diffInMinutes($record->created_at) > 60) {
-            DB::table('password_reset_tokens')->where('email', $request->email)->delete();
-            return response()->json([
-                'message' => 'Token reset password sudah kedaluwarsa. Silakan minta link baru.',
+                'message' => 'Sesi reset password tidak valid atau sudah kedaluwarsa. Silakan mulai ulang.',
             ], 422);
         }
 
@@ -181,8 +246,8 @@ class AuthController extends Controller
             'password' => Hash::make($request->password),
         ]);
 
-        // Hapus semua token reset untuk email ini
-        DB::table('password_reset_tokens')->where('email', $request->email)->delete();
+        // Hapus record OTP
+        $record->delete();
 
         // Cabut semua token sanctum agar user harus login ulang
         $user->tokens()->delete();

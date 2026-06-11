@@ -145,6 +145,36 @@ export default function CourseDetail() {
                     className="w-full h-full border-0"
                   />
                 </div>
+              ) : selectedMaterial.type === 'pdf' && selectedMaterial.file_url ? (
+                <div>
+                  <div className="px-6 py-4 border-b border-emerald-100 bg-emerald-50 flex items-center justify-between">
+                    <span className="text-xs bg-white text-emerald-700 border border-emerald-100 px-2.5 py-1 rounded-full font-semibold uppercase">📂 Dokumen</span>
+                    <span className="text-xs text-emerald-600">Materi {selectedMaterial.order}</span>
+                  </div>
+                  {selectedMaterial.file_url.endsWith('.pdf') ? (
+                    <div className="w-full" style={{ height: '600px' }}>
+                      <iframe
+                        src={`http://localhost:8000/storage/${selectedMaterial.file_url}`}
+                        title={selectedMaterial.title}
+                        className="w-full h-full border-0"
+                      />
+                    </div>
+                  ) : (
+                    <div className="px-6 py-8 text-center">
+                      <p className="text-4xl mb-3">📄</p>
+                      <p className="text-sm text-zinc-600 mb-4">File ini tidak dapat ditampilkan di browser. Silakan unduh untuk membukanya.</p>
+                      <a
+                        href={`http://localhost:8000/storage/${selectedMaterial.file_url}`}
+                        download
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm px-5 py-2.5 rounded-xl transition-colors shadow-lg shadow-emerald-600/15"
+                      >
+                        ⬇ Unduh File
+                      </a>
+                    </div>
+                  )}
+                </div>
               ) : (
                 <div className="px-6 py-4 border-b border-emerald-100 bg-emerald-50 flex items-center justify-between">
                   <span className="text-xs bg-white text-emerald-700 border border-emerald-100 px-2.5 py-1 rounded-full font-semibold uppercase">📄 Bacaan</span>
@@ -170,7 +200,7 @@ export default function CourseDetail() {
                 <p className="text-emerald-700/70 text-sm mt-3 leading-relaxed">{course.description}</p>
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 pt-6 border-t border-emerald-100">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 pt-6 border-t border-emerald-100">
                 <div>
                   <p className="text-xs text-emerald-600/70 font-medium">Instruktur</p>
                   <p className="text-sm font-semibold text-emerald-950 mt-0.5">{course.instructor?.name || 'Instruktur'}</p>
@@ -186,7 +216,7 @@ export default function CourseDetail() {
               </div>
 
               {!isEnrolled && (
-                <div className="bg-emerald-50 border border-emerald-100 p-6 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4 mt-2">
+                <div className="bg-emerald-50 border border-emerald-100 p-6 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4 mt-2 text-center md:text-left">
                   <div>
                     <h3 className="text-sm font-black text-emerald-950">Mulai belajar hari ini!</h3>
                     <p className="text-xs text-emerald-700/70 mt-1">Daftarkan diri Anda sekarang untuk membuka semua materi dan kuis.</p>

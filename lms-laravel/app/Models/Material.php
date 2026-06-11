@@ -15,6 +15,7 @@ class Material extends Model
         'type',
         'content',
         'video_url',
+        'file_url',
         'order'
     ];
 

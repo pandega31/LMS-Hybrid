@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Route;
 Route::post('register', [AuthController::class, 'register']);
 Route::post('login', [AuthController::class, 'login']);
 Route::post('forgot-password', [AuthController::class, 'forgotPassword']);
+Route::post('verify-otp', [AuthController::class, 'verifyOtp']);
 Route::post('reset-password', [AuthController::class, 'resetPassword']);
 
 // Public Course Routes (For catalog and detail view)
@@ -21,6 +22,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Auth Routes (Protected)
     Route::post('logout', [AuthController::class, 'logout']);
     Route::get('me', [AuthController::class, 'me']);
+    Route::post('me/profile', [AuthController::class, 'updateProfile']);
 
     // Courses CRUD (For Instructors)
     Route::post('courses', [CourseController::class, 'store']);
@@ -29,6 +31,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Materials CRUD (For Instructors)
     Route::apiResource('courses.materials', MaterialController::class)->shallow();
+    // Extra POST route for material update with file upload (method spoofing workaround for API)
+    Route::post('materials/{material}/update-with-file', [MaterialController::class, 'update']);
 
     // Enrollments (For Students)
     Route::post('courses/{course}/enroll', [EnrollmentController::class, 'enroll']);

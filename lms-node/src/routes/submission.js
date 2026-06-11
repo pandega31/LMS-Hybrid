@@ -49,6 +49,23 @@ router.get('/user/:userId', async (req, res) => {
   res.json(subs);
 });
 
+// PUT update nama user di semua submission miliknya
+router.put('/user/:userId/name', async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ error: 'Nama wajib diisi' });
+
+    await Submission.updateMany(
+      { user_id: Number(req.params.userId) },
+      { $set: { user_name: name } }
+    );
+    res.json({ message: 'Nama berhasil diperbarui di semua riwayat submission' });
+  } catch (err) {
+    console.error('Update name error:', err);
+    res.status(500).json({ error: 'Gagal memperbarui nama' });
+  }
+});
+
 // GET analytics untuk instruktur berdasarkan daftar course id
 router.get('/analytics/instructor', async (req, res) => {
   try {
@@ -67,6 +84,7 @@ router.get('/analytics/instructor', async (req, res) => {
         completion_rate: 0,
         top_quiz: null,
         recent_submissions: [],
+        all_quizzes: [],
       });
     }
 
@@ -123,6 +141,7 @@ router.get('/analytics/instructor', async (req, res) => {
         time_taken: sub.time_taken,
         completed_at: sub.completed_at,
       })),
+      all_quizzes: quizzes,
     });
   } catch (err) {
     console.error('Analytics error:', err);
